@@ -194,7 +194,7 @@ def Create_random_mixed_graph(n, m, integer_size=True,
 
 def Create_random_graph(n, m, shape="square", integer_size=True,
                         size_min=1, size_max=8,
-                        overlap_fraction=0.0, overlap_degree=0.5,
+                        overlap_fraction=0.0, overlap_degree=0.0,
                         grid_size=50, square_fraction=0.5):
     shape = shape.lower()
     if shape == "square":
