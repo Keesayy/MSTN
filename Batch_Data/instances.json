@@ -1,0 +1,38 @@
+[
+  {
+    "instance_id": 7247,
+    "seed": 317279398,
+    "n": 750,
+    "grid_size": 383,
+    "smin": 11,
+    "smax": 12,
+    "max_iter": 10000
+  },
+  {
+    "instance_id": 7282,
+    "seed": 593933876,
+    "n": 750,
+    "grid_size": 383,
+    "smin": 11,
+    "smax": 12,
+    "max_iter": 10000
+  },
+  {
+    "instance_id": 7294,
+    "seed": 751712096,
+    "n": 750,
+    "grid_size": 383,
+    "smin": 11,
+    "smax": 12,
+    "max_iter": 10000
+  },
+  {
+    "instance_id": 7359,
+    "seed": 1883942547,
+    "n": 1000,
+    "grid_size": 443,
+    "smin": 13,
+    "smax": 14,
+    "max_iter": 10000
+  }
+]
