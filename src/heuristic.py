@@ -51,23 +51,6 @@ def _project_step(
     return new_positions, max_move
 
 
-def _run_classic(
-    graph: GeoGraph,
-    initial_positions: List[Point],
-    max_iter: int,
-    tol: float,
-) -> Tuple[List[Point], list, float, int]:
-    """Classic alternating heuristic: Euclidean MST → project, repeat."""
-    positions = initial_positions
-    for k in range(max_iter):
-        mst, _ = Kruskal_MST(positions, graph.edges)
-        positions, max_move = _project_step(graph, positions, mst)
-        if max_move < tol:
-            break
-    mst, cost = Kruskal_MST(positions, graph.edges)
-    return positions, mst, cost, k
-
-
 def _random_positions(graph: GeoGraph, rng: np.random.Generator) -> List[Point]:
     """Uniformly random representative inside each neighborhood."""
     positions = []
@@ -134,25 +117,30 @@ def _project_step_adaptive(
     return new_positions, max_move
 
 
+# ── _run_adaptive : ajout du paramètre on_iter ────────────────────────────────
+
 def _run_adaptive(
     graph: GeoGraph,
     initial_positions: List[Point],
     max_iter: int,
     tol: float,
-    alpha: float = 0.5,
+    alpha: float = 1.0,
+    on_iter: Optional[Callable] = None,  # ← NOUVEAU
 ) -> Tuple[List[Point], list, float, int]:
-    """Classic MST → partial-step project loop with step size alpha."""
+    """MST → partial-step project loop. alpha=1.0 ≡ classic full step."""
     positions = initial_positions
+    k = 0
     for k in range(max_iter):
         mst, _ = Kruskal_MST(positions, graph.edges)
         positions, max_move = _project_step_adaptive(graph, positions, mst, alpha=alpha)
+        if on_iter is not None:
+            mst_k, cost_k = Kruskal_MST(positions, graph.edges)
+            on_iter(k, positions, mst_k, cost_k)
         if max_move < tol:
             break
     mst, cost = Kruskal_MST(positions, graph.edges)
     return positions, mst, cost, k
 
-
-# ── main heuristic ────────────────────────────────────────────────────────────
 
 def Heuristic_MSTN_alternating(
     graph: GeoGraph,
@@ -160,11 +148,29 @@ def Heuristic_MSTN_alternating(
     tol: float = 1e-2,
     initial_positions: Optional[List[Point]] = None,
     metrics: Optional[List[Callable]] = None,
-    strategy: str = "best",     # "best" | "cycle" | "random" | "multistart"
-    n_random: int = 5,         
+    strategy: str = "best",      # "best" | "cycle" | "random" | "multistart"
+    n_random: int = 5,
     seed: int = 67,
+    alpha: float = 1.0,          # ← NOUVEAU  (1.0 = comportement classique)
+    on_iter: Optional[Callable] = None,  # ← NOUVEAU  signature: (k, positions, mst, cost)
     verbose: bool = False,
 ):
+    """
+    Alternating MSTN heuristic.
+
+    alpha : float in (0, 1]
+        Step size for the projection update:
+            y_i^{k+1} = y_i^k + alpha * (proj(centroid) - y_i^k)
+        alpha=1.0  →  classic full-step (former Heuristic_MSTN_alternating)
+        alpha<1.0  →  damped step      (former Heuristic_MSTN_adaptive)
+
+    on_iter : callable | None
+        Called at every iteration with signature:
+            on_iter(k: int, positions: List[Point],
+                    mst: list, cost: float)
+        For strategy="multistart", called on the best start's trajectory
+        (clean re-run after the selection pass — zero overhead on others).
+    """
     rng = np.random.default_rng(seed)
     metrics = metrics or DEFAULT_METRICS
     centers = [nb.center for nb in graph.neighborhoods]
@@ -172,12 +178,11 @@ def Heuristic_MSTN_alternating(
 
     _, original_cost = Kruskal_MST(centers, graph.edges)
 
-    # ── multistart: generate diverse starts, run classic from each ────────────
+    # ── multistart ────────────────────────────────────────────────────────────
     if strategy == "multistart":
         starts = [
             ("euclidean_centers", centers),
-            *[(f"metric_{m.__name__}",
-               _metric_initial_positions(graph, centers, m))
+            *[(f"metric_{m.__name__}", _metric_initial_positions(graph, centers, m))
               for m in metrics if m is not _euclidean],
             *[(f"random_{i}", _random_positions(graph, rng))
               for i in range(n_random)],
@@ -185,19 +190,33 @@ def Heuristic_MSTN_alternating(
 
         best_cost = float("inf")
         best_result = None
+        best_init_pos = None
+
+        # Pass 1 — find best start (no callback, fast)
         for label, init_pos in starts:
-            pos, mst, cost, iters = _run_classic(graph, init_pos, max_iter, tol)
+            pos, mst, cost, iters = _run_adaptive(
+                graph, init_pos, max_iter, tol, alpha=alpha
+            )
             if verbose:
                 print(f"  [{label:<25}] cost={cost:.4f}  iters={iters+1}")
             if cost < best_cost:
                 best_cost = cost
-                best_result = (pos, mst, cost, original_cost, iters, label)  # ← label added
+                best_result = (pos, mst, cost, original_cost, iters, label)
+                best_init_pos = init_pos
 
         if verbose:
-            print(f"\n  Best: {best_result[-1]}  ->  cost={best_result[2]:.4f}")
+            print(f"\n  Best: {best_result[-1]} → cost={best_result[2]:.4f}")
+
+        # Pass 2 — replay best start with callback (only if needed)
+        if on_iter is not None:
+            _run_adaptive(
+                graph, best_init_pos, max_iter, tol,
+                alpha=alpha, on_iter=on_iter,
+            )
 
         return best_result  # (positions, mst, cost, original_cost, iters, label)
 
+    # ── per-iteration strategies : best / cycle / random ─────────────────────
     for k in range(max_iter):
         if strategy == "best":
             active_metrics = metrics
@@ -209,108 +228,58 @@ def Heuristic_MSTN_alternating(
             raise ValueError(f"Unknown strategy '{strategy}'")
 
         best_candidate_cost = float("inf")
-        best_candidate_pos  = None
-        best_max_move       = 0.0
+        best_candidate_pos = None
+        best_max_move = 0.0
 
-        # ── metric-based candidates ───────────────────────────────────────────────
         for metric in active_metrics:
             mst_candidate, _ = Kruskal_MST_metric(positions, graph.edges, metric)
-            candidate_pos, max_move = _project_step(graph, positions, mst_candidate)
+            candidate_pos, max_move = _project_step_adaptive(
+                graph, positions, mst_candidate, alpha=alpha   # ← alpha ici aussi
+            )
             _, candidate_cost = Kruskal_MST(candidate_pos, graph.edges)
-
             if candidate_cost < best_candidate_cost:
                 best_candidate_cost = candidate_cost
-                best_candidate_pos  = candidate_pos
-                best_max_move       = max_move
+                best_candidate_pos = candidate_pos
+                best_max_move = max_move
 
-        # ── random candidates (all per-iteration strategies) ─────────────────────
         for _ in range(n_random):
             rand_pos = _random_positions(graph, rng)
             mst_rand, _ = Kruskal_MST(rand_pos, graph.edges)
-            candidate_pos, max_move = _project_step(graph, rand_pos, mst_rand)
+            candidate_pos, max_move = _project_step_adaptive(
+                graph, rand_pos, mst_rand, alpha=alpha         # ← alpha ici aussi
+            )
             _, candidate_cost = Kruskal_MST(candidate_pos, graph.edges)
-
             if candidate_cost < best_candidate_cost:
                 best_candidate_cost = candidate_cost
-                best_candidate_pos  = candidate_pos
-                best_max_move       = max_move
+                best_candidate_pos = candidate_pos
+                best_max_move = max_move
 
         positions = best_candidate_pos
+
+        # callback
+        if on_iter is not None:
+            mst_k, cost_k = Kruskal_MST(positions, graph.edges)
+            on_iter(k, positions, mst_k, cost_k)
+
         if best_max_move < tol:
             break
-
 
     mst, cost = Kruskal_MST(positions, graph.edges)
     return positions, mst, cost, original_cost, k
 
-# ── adaptive-step heuristic (multistart) ─────────────────────────────────────
 
-def Heuristic_MSTN_adaptive(
-    graph: GeoGraph,
-    max_iter: int = 100,
-    tol: float = 1e-2,
-    alpha: float = 0.5,             # step size  ∈ (0, 1]
-    initial_positions: Optional[List[Point]] = None,
-    metrics: Optional[List[Callable]] = None,
-    n_random: int = 5,
-    seed: int = 67,
-    verbose: bool = False,
-):
-    """
-    Adaptive-step alternating heuristic with multistart strategy.
+# Heuristic_MSTN_adaptive : deprecated wrapper
 
-    At each iteration:
-        y_i^{k+1} = y_i^k + alpha * (z_i^k - y_i^k)
-    where z_i^k is the projection of the MST-neighbors' centroid onto
-    neighborhood i, and alpha ∈ (0, 1].
+def Heuristic_MSTN_adaptive(graph, alpha=0.5, **kwargs):
+    """Deprecated — use Heuristic_MSTN_alternating(strategy='multistart', alpha=alpha)."""
+    import warnings
+    warnings.warn(
+        "Heuristic_MSTN_adaptive is deprecated. "
+        "Use Heuristic_MSTN_alternating(strategy='multistart', alpha=alpha).",
+        DeprecationWarning, stacklevel=2,
+    )
+    return Heuristic_MSTN_alternating(strategy="multistart", alpha=alpha, **kwargs)
 
-    alpha = 1.0  →  identical to the classic full-step heuristic.
-    alpha < 1.0  →  smaller moves per iteration (more stable, slower).
-
-    Strategy: multistart (euclidean centers + metric-based + random).
-
-    Returns
-    -------
-    (positions, mst, cost, original_cost, iters, best_label)
-    Same tuple shape as Heuristic_MSTN_alternating with strategy='multistart'.
-    """
-    rng     = np.random.default_rng(seed)
-    metrics = metrics or DEFAULT_METRICS
-    centers = [nb.center for nb in graph.neighborhoods]
-
-    _, original_cost = Kruskal_MST(centers, graph.edges)
-
-    # ── build multistart candidates ───────────────────────────────────────────
-    starts = [
-        ("euclidean_centers", centers),
-        *[
-            (f"metric_{m.__name__}", _metric_initial_positions(graph, centers, m))
-            for m in metrics
-            if m is not _euclidean
-        ],
-        *[
-            (f"random_{i}", _random_positions(graph, rng))
-            for i in range(n_random)
-        ],
-    ]
-
-    best_cost   = float("inf")
-    best_result = None
-
-    for label, init_pos in starts:
-        pos, mst, cost, iters = _run_adaptive(
-            graph, init_pos, max_iter, tol, alpha=alpha
-        )
-        if verbose:
-            print(f"  [{label:<25}] cost={cost:.4f}  iters={iters + 1}")
-        if cost < best_cost:
-            best_cost   = cost
-            best_result = (pos, mst, cost, original_cost, iters, label)
-
-    if verbose:
-        print(f"\n  Best: {best_result[-1]}  ->  cost={best_result[2]:.4f}")
-
-    return best_result   # (positions, mst, cost, original_cost, iters, label)
 
 
 def Heuristic_Grid(
@@ -408,7 +377,7 @@ def Heuristic_Grid(
                 move = np.linalg.norm(
                     new_positions[i].To_numpy() - positions[i].To_numpy()
                 )
-                if move > 1e-2:
+                if move >= 1e-2:
                     moved_nodes.add(i)
             positions = new_positions
             mst, cost = Kruskal_MST(positions, graph.edges)

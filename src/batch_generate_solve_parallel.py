@@ -77,7 +77,7 @@ def run_one(job):
     pos_h, mst_h, cost_h, original_cost, hstats = Heuristic_MSTN_alternating(G)
     time_heuristic = time.perf_counter() - t0
 
-    t0 = time.perfcounter()
+    t0 = time.perf_counter()
     pos_g, mst_g, cost_g, _, gurobi_stats = Solve_MINLP(
         G,
         time_limit=TIME_LIMIT,

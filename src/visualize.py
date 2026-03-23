@@ -204,7 +204,7 @@ def Draw_graph_centered(graph: GeoGraph):
         ax.plot([p.x, q.x], [p.y, q.y], color='gray', linewidth=0.2)
 
     # Distance list box
-    edge_report_list = graph.edges[:40]
+    edge_report_list = graph.edges[:27]
     dist_report = "\n".join(f"{u} - {v} : {Distance(centers[u], centers[v]):.2f}" for (u, v) in edge_report_list)
     ax.text(1.02, 0.98, "Edge Distances:\n" + dist_report,
             transform=ax.transAxes, fontsize=10, verticalalignment='top',

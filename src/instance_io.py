@@ -217,18 +217,18 @@ def load_instance(filepath: str) -> tuple:
     mip_gap = gurobi_stats.get("mip_gap")
     runtime = gurobi_stats.get("runtime_s")
 
-    print(f"[instance_io] Loaded : {path}\n")
-    print_dict(extra_params)
-    print()
-    print(
-        f"n={G.N}\n|E|={len(G.edges)}\n"
-        f"MST={original_cost:.2f}\n"
-        f"Heuristic={cost_h:.2f}\n"
-        f"Gurobi={cost_g:.2f}\n"
-        f"gap={gap_pct:+.2f}%\n"
-        f"MIP gap={f'{mip_gap:.4%}' if mip_gap is not None else 'n/a'}\n"
-        f"runtime={f'{runtime:.1f}s' if runtime is not None else 'n/a'}\n"
-    )
+    # print(f"[instance_io] Loaded : {path}\n")
+    # print_dict(extra_params)
+    # print()
+    # print(
+    #     f"n={G.N}\n|E|={len(G.edges)}\n"
+    #     f"MST={original_cost:.2f}\n"
+    #     f"Heuristic={cost_h:.2f}\n"
+    #     f"Gurobi={cost_g:.2f}\n"
+    #     f"gap={gap_pct:+.2f}%\n"
+    #     f"MIP gap={f'{mip_gap:.4%}' if mip_gap is not None else 'n/a'}\n"
+    #     f"runtime={f'{runtime:.1f}s' if runtime is not None else 'n/a'}\n"
+    # )
 
     return (
         G,
